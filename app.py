@@ -1,99 +1,111 @@
-import streamlit as st
 import xarray as xr
 import holoviews as hv
-from holoviews import opts
 import geoviews as gv
 from cartopy import crs as ccrs
+import panel as pn
+import streamlit as st
+import numpy as np
 
-# Enable Holoviews for Bokeh backend
-hv.extension("bokeh")
+# Initialize Holoviews and Geoviews extensions
+hv.extension('bokeh')
+gv.extension('bokeh')
 
-# Load the NetCDF file
-@st.cache
+# Path to the NetCDF file
+NETCDF_FILE = "all_gwl_humidex_max_with_dates.nc"
+
+# Cache the loading of data
+@st.cache_data
 def load_data(file_path):
+    """Load the NetCDF dataset."""
     return xr.open_dataset(file_path)
 
-# File path (Update to your correct NetCDF path)
-file_path = "all_gwl_humidex_max_with_dates.nc"
+# Load the dataset
+ds = load_data(NETCDF_FILE)
 
-# Load dataset
-ds = load_data(file_path)
+# Create GWL and Year selectors
+gwl_options = list(ds["gwl"].values)
+default_gwl = gwl_options[0]
 
-# Define actual GWL-specific year ranges
-year_ranges = {
-    "1.0": (1995, 2014),
-    "1.5": (2008, 2027),
-    "2.0": (2018, 2037),
-    "2.5": (2029, 2048),
-    "3.0": (2037, 2056),
-    "4.0": (2052, 2071),
-}
+gwl_selector = pn.widgets.Select(name="Select GWL", options=gwl_options, value=default_gwl)
 
-# Sidebar for GWL selection
-st.sidebar.title("Controls")
-gwl = st.sidebar.selectbox("Select GWL", list(year_ranges.keys()), index=5)  # Default: GWL 4.0
+# Function to get the year range for a selected GWL
+def get_years_for_gwl(gwl):
+    return list(ds["year"].values)
 
-# Dynamically adjust year slider range based on selected GWL
-start_year, end_year = year_ranges[gwl]
-year = st.sidebar.slider("Select Year", start_year, end_year, start_year)
+# Create a year selector that updates dynamically
+year_slider = pn.widgets.IntSlider(name="Select Year", start=0, end=0, value=0)
 
-# Convert selected year to relative index (0–19)
-relative_year = year - start_year
+def update_year_slider(event):
+    gwl = event.new
+    years = get_years_for_gwl(gwl)
+    year_slider.start = int(years[0])
+    year_slider.end = int(years[-1])
+    year_slider.value = int(years[0])
 
-# Ensure relative_year is within the valid range
-if relative_year < 0 or relative_year > 19:
-    st.error(f"Year {year} is out of range for GWL {gwl}. Valid years: {start_year}–{start_year+19}")
-    st.stop()
+gwl_selector.param.watch(update_year_slider, "value")
 
-# Extract data for selected GWL and year
-humidex_field = ds["humidex_max"].sel(gwl=gwl, year=relative_year)
-lat_percentile = ds["lat_percentile"].sel(gwl=gwl, year=relative_year).values
-lon_percentile = ds["lon_percentile"].sel(gwl=gwl, year=relative_year).values
-lat_abs_max = ds["lat_abs_max"].sel(gwl=gwl, year=relative_year).values
-lon_abs_max = ds["lon_abs_max"].sel(gwl=gwl, year=relative_year).values
-date = ds["date_of_max_percentile"].sel(gwl=gwl, year=relative_year).values
-absolute_max_value = humidex_field.max().values
-percentile_max_value = float(humidex_field.quantile(0.999, skipna=True).values)
+# Plotting function
+def plot_humidex(gwl, year):
+    """Generate the interactive plot for the given GWL and year."""
+    # Extract data for the selected GWL and year
+    humidex_field = ds["humidex_max"].sel(gwl=gwl, year=year)
+    lat_percentile = ds["lat_percentile"].sel(gwl=gwl, year=year).values
+    lon_percentile = ds["lon_percentile"].sel(gwl=gwl, year=year).values
+    lat_abs_max = ds["lat_abs_max"].sel(gwl=gwl, year=year).values
+    lon_abs_max = ds["lon_abs_max"].sel(gwl=gwl, year=year).values
 
-# Create a GeoViews dataset
-gv_data = gv.Dataset(
-    (ds["longitude"], ds["latitude"], humidex_field),
-    kdims=["Longitude", "Latitude"],
-    vdims=["Humidex"],
-    crs=ccrs.PlateCarree(),
-)
+    # Create the base plot
+    gv_data = gv.Dataset(
+        (ds["longitude"], ds["latitude"], humidex_field),
+        kdims=["Longitude", "Latitude"],
+        vdims=["Humidex"],
+        crs=ccrs.PlateCarree()
+    )
 
-# Generate the interactive plot
-plot = gv_data.to(gv.QuadMesh, ["Longitude", "Latitude"], ["Humidex"]).opts(
-    cmap="RdBu_r",
-    colorbar=True,
-    clim=(20, 50),  # Fixed color bar range
-    tools=["hover"],
-    projection=ccrs.PlateCarree(),
-    width=800,
-    height=600,
-    title=f"GWL {gwl}, Year: {year}, Date: {date}",
-)
+    quadmesh = gv_data.to(gv.QuadMesh, ["Longitude", "Latitude"], "Humidex").opts(
+        cmap="RdBu_r",
+        colorbar=True,
+        clim=(20, 50),
+        tools=["hover"],
+        projection=ccrs.PlateCarree()
+    )
 
-# Add markers for 99.9th percentile and absolute max
-markers = gv.Points(
-    [(lon_percentile, lat_percentile), (lon_abs_max, lat_abs_max)],
-    vdims=["Location"],
-    crs=ccrs.PlateCarree(),
-).opts(size=10, color="black", marker="x")
+    # Add points for percentile and absolute maxima
+    point_data = [
+        (lon_percentile, lat_percentile, "99.9th Percentile", "cyan"),
+        (lon_abs_max, lat_abs_max, "Absolute Max", "black"),
+    ]
+    markers = gv.Points(
+        point_data,
+        kdims=["Longitude", "Latitude"],
+        vdims=["Description", "Color"],
+        crs=ccrs.PlateCarree()
+    ).opts(size=10, marker="x", color="Color", show_legend=True)
 
-# Display the interactive plot in Streamlit
-st.bokeh_chart(hv.render(plot * markers, backend="bokeh"))
-
-# Display additional information
-st.markdown(
-    f"""
-    **Summary for GWL {gwl}, Year {year}**  
-    - **Date of Maximum Humidex**: {date}  
-    - **99.9th Percentile Maximum Humidex**: {percentile_max_value:.2f}°C  
-    - **Absolute Maximum Humidex**: {absolute_max_value:.2f}°C  
-    - **99.9th Percentile Location**: ({lat_percentile:.2f}, {lon_percentile:.2f})  
-    - **Absolute Maximum Location**: ({lat_abs_max:.2f}, {lon_abs_max:.2f})  
+    # Add caption
+    date_of_max = ds["date_of_max_percentile"].sel(gwl=gwl, year=year).values.item()
+    caption = f"""
+    Ensemble 01, Date: {date_of_max}\n
+    99.9th Percentile Max: {humidex_field.max().values:.2f}°C | Absolute Max: {humidex_field.max().values:.2f}°C\n
+    99.9th Percentile Location: ({lat_percentile:.2f}, {lon_percentile:.2f})\n
+    Absolute Max Location: ({lat_abs_max:.2f}, {lon_abs_max:.2f})
     """
-)
 
+    return hv.Div(caption) + (quadmesh * markers)
+
+# Create an interactive panel layout
+def interactive_plot(gwl, year):
+    return plot_humidex(gwl, year)
+
+# Streamlit app layout
+st.title("Interactive Humidex Viewer")
+st.sidebar.header("Controls")
+
+# Sidebar inputs
+selected_gwl = st.sidebar.selectbox("Select GWL", gwl_options)
+years = get_years_for_gwl(selected_gwl)
+selected_year = st.sidebar.slider("Select Year", min(years), max(years), min(years))
+
+# Display the plot
+plot = plot_humidex(selected_gwl, selected_year)
+st.bokeh_chart(hv.render(plot, backend="bokeh"), use_container_width=True)
