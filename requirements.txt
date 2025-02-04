@@ -1,9 +1,10 @@
+streamlit==1.16.0
 numpy==1.21.6
-xarray
+xarray==0.20.2
 holoviews==1.14.8
 geoviews==1.9.6
 bokeh==2.4.3
 panel==0.14.4
-streamlit==1.12.0
-netCDF4
-setuptools==65.5.0
+netcdf4==1.6.3
+pyproj==3.4.1
+shapely==1.8.5
