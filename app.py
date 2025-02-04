@@ -1,92 +1,92 @@
-import os
-import streamlit as st
+import panel as pn
 import xarray as xr
-import holoviews as hv
 import geoviews as gv
+import holoviews as hv
 from holoviews import opts
+from cartopy import crs as ccrs
 
-# Enable Bokeh backend for HoloViews
-hv.extension("bokeh")
-gv.extension("bokeh")
+# Load Panel extension
+pn.extension()
 
-# Title of the app
-st.title("Interactive Humidex Viewer")
+# Load the NetCDF file
+nc_file_path = "all_gwl_humidex_max_with_dates.nc"
+ds = xr.open_dataset(nc_file_path)
 
-# Debugging: Show current directory and files
-st.subheader("Debugging Information")
-st.write("Current working directory:", os.getcwd())
-st.write("Files in directory:", os.listdir())
+# Define GWL-specific year ranges
+year_ranges = {
+    "1.0": (1995, 2014),
+    "1.5": (2008, 2027),
+    "2.0": (2018, 2037),
+    "2.5": (2029, 2048),
+    "3.0": (2037, 2056),
+    "4.0": (2052, 2071),
+}
 
-# File path for NetCDF data
-FILE_PATH = "all_gwl_humidex_max_with_dates.nc"
-if not os.path.exists(FILE_PATH):
-    st.error(f"File not found: {FILE_PATH}")
-    st.stop()
+# Interactive widgets
+gwl_selector = pn.widgets.Select(name="Select GWL", options=list(year_ranges.keys()), value="4.0")
+year_selector = pn.widgets.IntSlider(name="Select Year", start=2052, end=2071, step=1, value=2052)
 
-# Load NetCDF file
-try:
-    ds = xr.open_dataset(FILE_PATH)
-    st.write("Dataset loaded successfully.")
-except Exception as e:
-    st.error(f"Failed to load dataset: {e}")
-    st.stop()
+# Update year slider dynamically
+@pn.depends(gwl_selector.param.value, watch=True)
+def update_year_slider(gwl):
+    start_year, end_year = year_ranges[gwl]
+    year_selector.start = start_year
+    year_selector.end = end_year
+    year_selector.value = start_year
 
-# GWL Dropdown Menu
-gwl_options = list(ds["gwl"].values)
-gwl = st.selectbox("Select GWL", options=gwl_options, index=0)
+# Plot function
+@pn.depends(gwl_selector.param.value, year_selector.param.value)
+def plot_humidex(gwl, year):
+    start_year = year_ranges[gwl][0]
+    relative_year = year - start_year
+    
+    # Extract data
+    humidex_field = ds["humidex_max"].sel(gwl=gwl, year=relative_year)
+    lat_percentile = ds["lat_percentile"].sel(gwl=gwl, year=relative_year).values
+    lon_percentile = ds["lon_percentile"].sel(gwl=gwl, year=relative_year).values
+    lat_abs_max = ds["lat_abs_max"].sel(gwl=gwl, year=relative_year).values
+    lon_abs_max = ds["lon_abs_max"].sel(gwl=gwl, year=relative_year).values
+    date = ds["date_of_max_percentile"].sel(gwl=gwl, year=relative_year).values
+    absolute_max_value = humidex_field.max().values
+    percentile_max_value = float(humidex_field.quantile(0.999, skipna=True).values)
 
-# Year Dropdown Menu
-start_year = 1995 if gwl != "4.0" else 2052
-year_options = list(range(start_year, start_year + 20))
-year = st.selectbox("Select Year", options=year_options)
-year_index = year - start_year
-
-# Extract data for the selected GWL and year
-try:
-    humidex_field = ds["humidex_max"].sel(gwl=gwl, year=year_index)
-    lat_percentile = ds["lat_percentile"].sel(gwl=gwl, year=year_index).values
-    lon_percentile = ds["lon_percentile"].sel(gwl=gwl, year=year_index).values
-    lat_abs_max = ds["lat_abs_max"].sel(gwl=gwl, year=year_index).values
-    lon_abs_max = ds["lon_abs_max"].sel(gwl=gwl, year=year_index).values
-except Exception as e:
-    st.error(f"Data extraction failed: {e}")
-    st.stop()
-
-# Display extracted data
-st.subheader("Extracted Data")
-st.write(f"Selected GWL: {gwl}, Year: {year}")
-st.write(f"99.9th Percentile Location: ({lat_percentile:.2f}, {lon_percentile:.2f})")
-st.write(f"Absolute Max Location: ({lat_abs_max:.2f}, {lon_abs_max:.2f})")
-
-# Create a simplified plot
-try:
+    # Convert to GeoViews dataset
     gv_data = gv.Dataset(
-        (ds["projection_x_coordinate"].values, ds["projection_y_coordinate"].values, humidex_field),
+        (ds["longitude"], ds["latitude"], humidex_field),
         kdims=["Longitude", "Latitude"],
         vdims=["Humidex"],
+        crs=ccrs.PlateCarree(),
     )
-    quadmesh = gv_data.to(gv.QuadMesh, ["Longitude", "Latitude"], "Humidex").opts(
+    
+    # Create QuadMesh
+    quadmesh = gv_data.to(gv.QuadMesh, ["Longitude", "Latitude"], ["Humidex"]).opts(
         cmap="RdBu_r",
         colorbar=True,
         clim=(20, 50),
-        tools=["hover"],
+        projection=ccrs.PlateCarree(),
         width=800,
         height=600,
+        title=f"GWL {gwl}, Date: {date}",
     )
 
-    # Add points for locations
-    points_data = [
-        (lon_percentile, lat_percentile, "99.9th Percentile", "cyan"),
-        (lon_abs_max, lat_abs_max, "Absolute Max", "black"),
-    ]
-    markers = gv.Points(points_data, kdims=["Longitude", "Latitude"], vdims=["Description", "Color"]).opts(
-        size=10,
-        marker="x",
-        color="Color",
-        show_legend=True,
-    )
+    # Add markers
+    markers = gv.Points(
+        [(lon_percentile, lat_percentile, "99.9th Percentile", "cyan"),
+         (lon_abs_max, lat_abs_max, "Absolute Max", "black")],
+        vdims=["Description", "Color"],
+        crs=ccrs.PlateCarree(),
+    ).opts(size=10, marker="x", color="Color", show_legend=True)
+    
+    return quadmesh * markers
 
-    # Render the plot
-    st.bokeh_chart(hv.render(quadmesh * markers, backend="bokeh"), use_container_width=True)
-except Exception as e:
-    st.error(f"Plot rendering failed: {e}")
+# Panel layout
+layout = pn.Column(
+    "# Interactive Humidex Plot",
+    gwl_selector,
+    year_selector,
+    plot_humidex,
+)
+
+# Serve the app
+update_year_slider(gwl_selector.value)
+layout.servable()
