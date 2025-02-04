@@ -7,3 +7,10 @@ cartopy
 numpy
 pandas
 netCDF4
+xarray
+numpy
+holoviews
+geoviews
+bokeh==2.4.3
+panel
+
