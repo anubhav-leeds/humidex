@@ -8,3 +8,4 @@ holoviews
 geoviews
 cartopy
 matplotlib
+bokeh
