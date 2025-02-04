@@ -1,5 +1,7 @@
 streamlit
 xarray
+holoviews
+geoviews
 matplotlib
 cartopy
 numpy
