@@ -9,44 +9,57 @@ from holoviews import opts
 hv.extension("bokeh")
 gv.extension("bokeh")
 
-# Set the title of the app
+# Title of the app
 st.title("Interactive Humidex Viewer")
 
+# Debugging: Show current directory and files
+st.subheader("Debugging Information")
+st.write("Current working directory:", os.getcwd())
+st.write("Files in directory:", os.listdir())
+
+# File path for NetCDF data
+FILE_PATH = "all_gwl_humidex_max_with_dates.nc"
+if not os.path.exists(FILE_PATH):
+    st.error(f"File not found: {FILE_PATH}")
+    st.stop()
+
+# Load NetCDF file
 try:
-    # Debugging information
-    st.subheader("Debugging Information")
-    st.write("Current working directory:", os.getcwd())
-    st.write("Files in directory:", os.listdir())
-
-    # File path to the NetCDF data
-    FILE_PATH = "all_gwl_humidex_max_with_dates.nc"
-    if not os.path.exists(FILE_PATH):
-        st.error(f"File not found: {FILE_PATH}")
-        st.stop()
-
-    # Load the NetCDF dataset
     ds = xr.open_dataset(FILE_PATH)
+    st.write("Dataset loaded successfully.")
+except Exception as e:
+    st.error(f"Failed to load dataset: {e}")
+    st.stop()
 
-    # Dropdown menu for GWL selection
-    gwl_options = list(ds["gwl"].values)
-    gwl = st.selectbox("Select GWL", options=gwl_options, index=0)
+# GWL Dropdown Menu
+gwl_options = list(ds["gwl"].values)
+gwl = st.selectbox("Select GWL", options=gwl_options, index=0)
 
-    # Dropdown menu for year selection (mapped to actual years)
-    start_year = 1995 if gwl != "4.0" else 2052  # Adjust this for each GWL
-    year_options = list(range(start_year, start_year + 20))
-    year = st.selectbox("Select Year", options=year_options)
+# Year Dropdown Menu
+start_year = 1995 if gwl != "4.0" else 2052
+year_options = list(range(start_year, start_year + 20))
+year = st.selectbox("Select Year", options=year_options)
+year_index = year - start_year
 
-    # Convert selected year to year index
-    year_index = year - start_year
-
-    # Extract data for the selected GWL and year
+# Extract data for the selected GWL and year
+try:
     humidex_field = ds["humidex_max"].sel(gwl=gwl, year=year_index)
     lat_percentile = ds["lat_percentile"].sel(gwl=gwl, year=year_index).values
     lon_percentile = ds["lon_percentile"].sel(gwl=gwl, year=year_index).values
     lat_abs_max = ds["lat_abs_max"].sel(gwl=gwl, year=year_index).values
     lon_abs_max = ds["lon_abs_max"].sel(gwl=gwl, year=year_index).values
+except Exception as e:
+    st.error(f"Data extraction failed: {e}")
+    st.stop()
 
-    # Create a HoloViews dataset for visualization
+# Display extracted data
+st.subheader("Extracted Data")
+st.write(f"Selected GWL: {gwl}, Year: {year}")
+st.write(f"99.9th Percentile Location: ({lat_percentile:.2f}, {lon_percentile:.2f})")
+st.write(f"Absolute Max Location: ({lat_abs_max:.2f}, {lon_abs_max:.2f})")
+
+# Create a simplified plot
+try:
     gv_data = gv.Dataset(
         (ds["projection_x_coordinate"].values, ds["projection_y_coordinate"].values, humidex_field),
         kdims=["Longitude", "Latitude"],
@@ -55,17 +68,13 @@ try:
     quadmesh = gv_data.to(gv.QuadMesh, ["Longitude", "Latitude"], "Humidex").opts(
         cmap="RdBu_r",
         colorbar=True,
-        color_levels=20,
         clim=(20, 50),
         tools=["hover"],
         width=800,
         height=600,
-        xlabel="Longitude",
-        ylabel="Latitude",
-        title=f"GWL {gwl}, Year: {year}",
     )
 
-    # Add location markers
+    # Add points for locations
     points_data = [
         (lon_percentile, lat_percentile, "99.9th Percentile", "cyan"),
         (lon_abs_max, lat_abs_max, "Absolute Max", "black"),
@@ -77,18 +86,7 @@ try:
         show_legend=True,
     )
 
-    # Caption for the plot
-    caption = (
-        f"GWL {gwl}, Year: {year}\n\n"
-        f"99.9th Percentile Max: {humidex_field.max().values:.2f}°C\n"
-        f"Absolute Max: {humidex_field.max().values:.2f}°C\n"
-        f"99.9th Percentile Location: ({lat_percentile:.2f}, {lon_percentile:.2f})\n"
-        f"Absolute Max Location: ({lat_abs_max:.2f}, {lon_abs_max:.2f})"
-    )
-    st.text(caption)
-
-    # Display the interactive plot
+    # Render the plot
     st.bokeh_chart(hv.render(quadmesh * markers, backend="bokeh"), use_container_width=True)
-
 except Exception as e:
-    st.error(f"An error occurred: {e}")
+    st.error(f"Plot rendering failed: {e}")
