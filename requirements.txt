@@ -1,7 +1,9 @@
+numpy==1.21.6
 xarray
-numpy==1.24.3
-holoviews
-geoviews
+holoviews==1.14.8
+geoviews==1.9.6
 bokeh==2.4.3
-panel
-streamlit
+panel==0.14.4
+streamlit==1.12.0
+netCDF4
+setuptools==65.5.0
